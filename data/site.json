@@ -1,0 +1,15 @@
+{
+  "title": "The Amazing Paragraph",
+  "tagline": "A literary magazine that only publishes paragraphs.",
+  "about": "The Amazing Paragraph is a literary magazine that publishes single, self-contained paragraphs. \n\nLorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n\nTisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+  "submissions": "Submit your paragraph using the form below or by email, with your name as you would like it printed. No attachments.",
+  "email": "editors@amazingparagraph.com",
+  "instagram": "@theamazingparagraph",
+  "formats": [
+    "Print",
+    "Magazine",
+    "Instagram"
+  ],
+  "labelFormat": "{n:3}",
+  "aboutImage": "/static/images/cat.png"
+}

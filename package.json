@@ -1,0 +1,9 @@
+{
+  "name": "the-amazing-paragraph",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Website for The Amazing Paragraph, a literary magazine that only publishes paragraphs.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,13 @@
+# editor backups / atomic-write temp files
+data/*.bak
+data/*.tmp
+
+# reader submissions contain names + emails — keep them out of version control
+data/submissions.json
+
+# environment / secrets (e.g. ADMIN_PASSWORD)
+.env
+.env.*
+
+node_modules/
+.DS_Store
