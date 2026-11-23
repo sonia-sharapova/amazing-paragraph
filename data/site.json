@@ -11,5 +11,8 @@
     "Instagram"
   ],
   "labelFormat": "{n:3}",
-  "aboutImage": "/static/images/cat.png"
+  "aboutImage": "/static/images/cat.png",
+  "inquiriesEmail": "admin@amazingparagraph.com",
+  "autoReply": "Hello {name},\n\nThank you for submitting your paragraph! We will review your submission and let you know when it has been reviewed.\n\nBest,\nThe Amazing Paragraph\nadmin@amazingparagraph.com",
+  "leadStyle": "plain"
 }

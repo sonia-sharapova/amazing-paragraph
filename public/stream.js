@@ -66,3 +66,33 @@
 })();
 
 
+
+// Place the index: horizontally centred in the free column between the latest paragraph's
+// card and the window edge; it sits inside the sticky header, so it moves with it.
+// Hidden if the column is too narrow.
+(() => {
+  const index = document.querySelector('.index');
+  const lead = document.querySelector('.para--lead');
+  const head = document.querySelector('.masthead');
+  if (!index || !lead || !head) return;
+  const root = document.documentElement;
+  let w = 0;
+  function place() {
+    const r = lead.getBoundingClientRect();
+    const card = root.classList.contains('lead-card') ? -parseFloat(getComputedStyle(lead, '::before').left) || 0 : 0; // resolved card padding in px
+    const right = r.right + card;
+    const free = root.clientWidth - right;
+    w = index.offsetWidth || w;
+    const cramped = free < w + 32;
+    index.classList.toggle('is-cramped', cramped);
+    if (cramped) return;
+    index.style.right = 'auto';
+    // relative to the header it hangs from (CSS puts it 48px below the header rule)
+    index.style.left = Math.round(right + (free - w) / 2 - head.getBoundingClientRect().left) + 'px';
+  }
+  place();
+    addEventListener('resize', place);
+  addEventListener('load', place);
+  new MutationObserver(place).observe(root, { attributes: true, attributeFilter: ['class'] }); // card toggle
+  document.fonts?.ready.then(place);
+})();

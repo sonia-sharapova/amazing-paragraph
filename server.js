@@ -20,7 +20,8 @@ if (!process.env.ADMIN_PASSWORD) {
 const files = {
   paragraphs: path.join(DATA_DIR, 'paragraphs.json'),
   site: path.join(DATA_DIR, 'site.json'),
-  submissions: path.join(DATA_DIR, 'submissions.json'), // TEMP submission form
+  delivery: path.join(DATA_DIR, 'delivery.json'), // written by ap-mail-status (did each email reach its inbox?)
+  submissions: path.join(DATA_DIR, 'submissions.json'), // every submission, kept even if the email fails
 };
 function readJSON(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 function writeJSON(file, data) {
@@ -37,6 +38,7 @@ const db = {
   saveSite: (site) => writeJSON(files.site, site),
   submissions: () => (fs.existsSync(files.submissions) ? readJSON(files.submissions).submissions : []),
   saveSubmissions: (submissions) => writeJSON(files.submissions, { submissions }),
+  delivery: () => { try { return readJSON(files.delivery); } catch { return {}; } },
   published() {
     const today = new Date().toISOString().slice(0, 10);
     return this.all()
@@ -48,7 +50,10 @@ const db = {
 // ---------- formatting ----------
 const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // Minimal inline markup for paragraph text: *italic*, **bold**. Everything else is escaped.
-const inline = (s = '') => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+const inline = (s = '') => esc(s)
+  .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  .replace(/\*(.+?)\*/g, '<em>$1</em>');
 
 // Label = per-paragraph override, else the site-wide template.
 // Tokens: {n} {n:3} (zero-padded) {issue} {series} {year} {roman}
@@ -94,7 +99,7 @@ function layout({ site, title, page, body, headerExtra = '' }) {
   const pub = db.published();
   const insta = site.instagram ? `https://instagram.com/${esc(site.instagram.replace(/^@/, ''))}` : '';
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${site.leadStyle === 'plain' ? '' : ' class="lead-card"'}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -103,9 +108,8 @@ function layout({ site, title, page, body, headerExtra = '' }) {
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text x='2' y='13' font-family='Helvetica' font-size='14'>¶</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@400&family=Alegreya+Sans:wght@400&family=Josefin+Sans:wght@400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@400&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<script>/* TEMP grid-paper + title-font preview */try{var h=document.documentElement;if(localStorage.getItem('ap-grid')==='1')h.classList.add('paper-grid');var t=localStorage.getItem('ap-title-font');if(t)h.dataset.titleFont=t}catch(e){}</script>
 </head>
 <body class="page-${page}" id="top">
 <header class="masthead">
@@ -119,24 +123,15 @@ function layout({ site, title, page, body, headerExtra = '' }) {
 <footer class="colophon">
   <span>© ${today.getFullYear()} ${esc(site.title)}</span>
   <span></span>
-  <span>${site.email ? `<a href="mailto:${esc(site.email)}">Email</a>` : ''}${insta ? `<a href="${insta}" rel="noopener">Instagram</a>` : ''}<a class="editor-link" href="/admin">Editor login</a></span>
+  <span>${(site.inquiriesEmail || site.email) ? `<a href="mailto:${esc(site.inquiriesEmail || site.email)}">Email</a>` : ''}${insta ? `<a href="${insta}" rel="noopener">Instagram</a>` : ''}<a class="editor-link" href="/admin">Editor login</a></span>
 </footer>
-<!-- TEMP: grid-paper preview toggle. Delete this button + script (and the head script) once decided. -->
-<button type="button" class="grid-toggle" aria-pressed="false">Grid paper</button>
-<button type="button" class="font-toggle">Title: Jost</button>
-<script>(function(){var b=document.querySelector('.grid-toggle'),h=document.documentElement;
-function s(){b.setAttribute('aria-pressed',String(h.classList.contains('paper-grid')))}s();
-b.addEventListener('click',function(){h.classList.toggle('paper-grid');try{localStorage.setItem('ap-grid',h.classList.contains('paper-grid')?'1':'0')}catch(e){}s()});
-var fonts=[['jost','Jost'],['alegreya','Alegreya Sans'],['josefin','Josefin Sans']],f=document.querySelector('.font-toggle');
-function cur(){var i=fonts.findIndex(function(x){return x[0]===h.dataset.titleFont});return i<0?0:i}
-function l(){f.textContent='Title: '+fonts[cur()][1]}l();
-f.addEventListener('click',function(){var n=fonts[(cur()+1)%fonts.length][0];h.dataset.titleFont=n;try{localStorage.setItem('ap-title-font',n)}catch(e){}l()})})();</script>
 </body>
 </html>`;
 }
 
-function paragraphBlock(v, { lead = false } = {}) {
+function paragraphBlock(v, { lead = false, kicker = '' } = {}) {
   return `<article class="para${lead ? ' para--lead' : ''}" id="p${v.number}" data-number="${v.number}">
+  ${kicker ? `<p class="stream__kicker stream__kicker--lead">${esc(kicker)}</p>` : ''}
   <div class="para__meta">
     <a class="para__label" href="/p/${v.number}">${esc(v.label)}</a>
     <span class="para__date">${esc(v.date)}</span>
@@ -156,7 +151,7 @@ function homePage(site) {
   const index = views.map((v) => `<li><a href="#p${v.number}" data-number="${v.number}"><span>${esc(v.label)}</span><span>${esc(v.author || v.title)}</span></a></li>`).join('');
   const body = `
 <section class="stream" data-total="${views.length}" data-page-size="${PAGE_SIZE}">
-  ${first.length ? `<p class="stream__kicker stream__kicker--lead">Latest</p>${paragraphBlock(first[0], { lead: true })}
+  ${first.length ? `${paragraphBlock(first[0], { lead: true, kicker: 'Latest' })}
   ${first.length > 1 ? '<p class="stream__kicker stream__kicker--rule">Previously</p>' : ''}
   ${first.slice(1).map((v) => paragraphBlock(v)).join('')}` : '<p class="empty">No paragraphs yet.</p>'}
   <div class="stream__sentinel" aria-hidden="true"></div>
@@ -223,7 +218,8 @@ function tocGroups(views, all) {
   </section>`).join('');
 }
 
-function aboutPage(site, flash) {
+// state: { sent, receipt } after a successful submission, or { error, values } to re-show the form with a message.
+function aboutPage(site, state) {
   const paras = String(site.about || '').split(/\n\s*\n/).map((t) => `<p>${inline(t.trim())}</p>`).join('');
   const pub = db.published(); // newest first
   // contributors grouped by issue (newest issue first), each name once per issue
@@ -237,7 +233,10 @@ function aboutPage(site, flash) {
   const contributors = [...byIssue.entries()].map(([issue, names]) =>
     `<div class="about__issue"><h3>${esc(issue)}</h3><ul>${[...names].sort((a, b) => a.localeCompare(b)).map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`).join('');
   const insta = site.instagram ? `https://instagram.com/${esc(site.instagram.replace(/^@/, ''))}` : '';
-  const sent = flash === 'sent', err = flash === 'error';
+  const sent = !!(state && state.sent);
+  const receipt = state && state.receipt && state.receipt.exp > Date.now() ? state.receipt : null;
+  const err = state && state.error ? state.error : '';
+  const v = (state && state.values) || {};
   const body = `
 <section class="about">
   <div class="about__hero">
@@ -251,26 +250,46 @@ function aboutPage(site, flash) {
       <div class="about__block" id="submit">
         <h2>Submissions</h2>
         ${site.submissions ? `<p>${inline(site.submissions)}</p>` : ''}
-        <!-- TEMP: submission form (entries land in data/submissions.json and the editor) -->
-        ${sent ? '<p class="form-note">Thank you — your paragraph has been received.</p>' : `
-        <form class="submit-form" method="post" action="/submit">
+        <!-- submission form: saved to data/submissions.json, shown in the editor, emailed to SUBMISSIONS_TO via Postfix -->
+        ${sent ? `
+        <div class="form-note" role="status">
+          <p>Thank you${receipt && receipt.name ? `, ${esc(receipt.name)}` : ''} — your paragraph has been received.</p>
+          ${receipt ? `<figure class="receipt">
+            <figcaption>What you sent</figcaption>
+            ${receipt.title ? `<p class="receipt__title">${esc(receipt.title)}</p>` : ''}
+            <p class="receipt__text">${inline(receipt.text)}</p>
+            ${receipt.name ? `<p class="receipt__by">${esc(receipt.name)}</p>` : '<p class="receipt__by">Anonymous</p>'}
+          </figure>` : ''}
+          ${receipt && receipt.email ? `<p class="form-spam-note">We’ve sent a confirmation to <strong>${esc(receipt.email)}</strong>. If it hasn’t arrived in a few minutes, please check your spam or junk folder — and mark it “not spam” so our replies reach you.</p>` : ''}
+          <a class="form-again" href="/about#submit">Submit another paragraph</a>
+        </div>
+        <script>/* reloading should show a fresh form, not the thank-you */ history.replaceState(null, '', '/about#submit');</script>` : `
+        <form class="submit-form${v.anonymous ? ' is-anonymous' : ''}" method="post" action="/submit" novalidate>
+          <label class="check"><input type="checkbox" name="anonymous" value="1"${v.anonymous ? ' checked' : ''}> Submit anonymously</label>
+          <p class="anon-note">Your name won’t be printed. An email is optional — leave one only if you’d like us to be able to reply.</p>
           <div class="row">
-            <label>Name, as it should be printed <input name="name" required maxlength="120" autocomplete="name"></label>
-            <label>Email <input name="email" type="email" required maxlength="200" autocomplete="email"></label>
+            <label class="name-field">Name, as it should be printed <input name="name" maxlength="120" autocomplete="name" value="${esc(v.name || '')}"></label>
+            <label>Email <span class="opt">(optional)</span> <input name="email" type="email" maxlength="200" autocomplete="email" value="${esc(v.email || '')}"></label>
           </div>
-          <label>Title (optional) <input name="title" maxlength="200"></label>
-          <label>Your paragraph <textarea name="text" rows="9" required maxlength="8000"></textarea></label>
+          <label>Title <span class="opt-always">(optional)</span> <input name="title" maxlength="200" value="${esc(v.title || '')}"></label>
+          <label>Your paragraph <textarea name="text" rows="9" maxlength="8000" aria-describedby="format-hint">${esc(v.text || '')}</textarea></label>
+          <p class="form-hint" id="format-hint">One paragraph only. For <em>italics</em> put asterisks around the words: <code>*like this*</code>. For <strong>bold</strong> use two: <code>**like this**</code>.</p>
           <label class="hp" aria-hidden="true">Leave empty <input name="website" tabindex="-1" autocomplete="off"></label>
-          ${err ? '<p class="error">Please fill in your name, email and paragraph.</p>' : ''}
+          ${err ? `<p class="error" role="alert">${esc(err)}</p>` : ''}
           <div><button type="submit">Submit paragraph</button></div>
-        </form>`}
+        </form>
+        <script>/* anonymous toggle: hide the name, make email optional */
+          (function(){var f=document.querySelector('.submit-form'),c=f&&f.querySelector('[name=anonymous]');
+          if(c)c.addEventListener('change',function(){f.classList.toggle('is-anonymous',c.checked)});})();
+        </script>`}
       </div>
       <div class="about__block">
         <h2>Contact</h2>
-        <ul class="about__links">
-          ${site.email ? `<li><a href="mailto:${esc(site.email)}">${esc(site.email)}</a></li>` : ''}
-          ${insta ? `<li><a href="${insta}" rel="noopener">${esc(site.instagram)}</a></li>` : ''}
-        </ul>
+        <dl class="about__contact">
+          ${site.inquiriesEmail ? `<div><dt>General inquiries</dt><dd><a href="mailto:${esc(site.inquiriesEmail)}">${esc(site.inquiriesEmail)}</a></dd></div>` : ''}
+          ${site.email ? `<div><dt>Submissions &amp; editors</dt><dd><a href="mailto:${esc(site.email)}">${esc(site.email)}</a></dd></div>` : ''}
+          ${insta ? `<div><dt>Instagram</dt><dd><a href="${insta}" rel="noopener">${esc(site.instagram)}</a></dd></div>` : ''}
+        </dl>
       </div>
     </div>
   </div>
@@ -301,6 +320,8 @@ function singlePage(site, number) {
   return layout({ site, title: v.title || v.label, page: 'single', body });
 }
 
+const ICON_DOWNLOAD = '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8m-3.5-3.5L8 10l3.5-3.5M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const ICON_SHEET = '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v11h-11zM2.5 6.2h11M2.5 9.8h11M6.2 2.5v11" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
 function adminPage(site, loggedIn, error) {
   if (!loggedIn) {
     return layout({ site, title: 'Editor', page: 'admin', body: `
@@ -317,7 +338,17 @@ function adminPage(site, loggedIn, error) {
 <section class="admin" id="admin">
   <div class="admin__bar">
     <h1>Editor</h1>
-    <div><a href="/admin/export.json" download>Download backup</a> <form method="post" action="/admin/logout" class="inline"><button type="submit">Log out</button></form></div>
+    <div>
+      <details class="dl">
+        <summary class="btn">${ICON_DOWNLOAD}<span>Download</span></summary>
+        <div class="dl__menu">
+          <a href="/admin/export.json" download>${ICON_DOWNLOAD}<span>Full backup <em>.json</em></span></a>
+          <a href="/admin/paragraphs.csv" download>${ICON_SHEET}<span>Paragraphs <em>spreadsheet .csv</em></span></a>
+          <a href="/admin/submissions.csv" download>${ICON_SHEET}<span>Submissions <em>spreadsheet .csv</em></span></a>
+        </div>
+      </details>
+      <form method="post" action="/admin/logout" class="inline"><button type="submit">Log out</button></form>
+    </div>
   </div>
   <div class="admin__cols">
     <div class="admin__list">
@@ -338,9 +369,164 @@ function adminPage(site, loggedIn, error) {
 <script src="/static/admin.js" defer></script>` });
 }
 
+// ---------- submission email (via the server's own Postfix: /usr/sbin/sendmail) ----------
+// Off unless SUBMISSIONS_TO is set (so local previews never send mail).
+// env: SUBMISSIONS_TO (e.g. editors@amazingparagraph.com),
+//      MAIL_FROM (default "The Amazing Paragraph <submissions@amazingparagraph.com>")
+const { fmtReceived, oneLine, encodeHeader, sendmail } = require('./lib/mail');
+const { toCSV, submissionColumns, paragraphColumns } = require('./lib/csv');
+function markSubmission(id, fields) {
+  try {
+    db.saveSubmissions(db.submissions().map((x) => (x.id === id ? { ...x, ...fields } : x)));
+  } catch (e) { console.error('[submissions] could not record mail status:', e.message); }
+}
+// Failure notices go to bounces@ (discarded); ap-mail-status reads the outcome from the mail log instead.
+const editorsMessageId = (id, attempt) => (attempt > 1 ? `<${id}.r${attempt}@amazingparagraph.com>` : `<${id}@amazingparagraph.com>`);
+const RETURN_PATH = process.env.MAIL_RETURN_PATH || 'bounces@amazingparagraph.com';
+async function notifySubmission(sub, attempt = 1) {
+  const to = oneLine(process.env.SUBMISSIONS_TO);
+  if (!to) return markSubmission(sub.id, { emailed: false, emailError: 'SUBMISSIONS_TO not set' });
+  const from = oneLine(process.env.MAIL_FROM) || 'The Amazing Paragraph <submissions@amazingparagraph.com>';
+  const fromAddr = (from.match(/<([^>]+)>/) || [, from])[1];
+  const name = oneLine(sub.name), email = oneLine(sub.email), title = oneLine(sub.title);
+  const body = [
+    'New submission to The Amazing Paragraph',
+    '',
+    `Name:     ${sub.anonymous ? 'Anonymous (submitted anonymously)' : name}`,
+    `Email:    ${email || '— not given'}`,
+    title ? `Title:    ${title}` : null,
+    `Received: ${fmtReceived(sub.received)}`,
+    '',
+    sub.text,
+    '',
+    email
+      ? `— Replying to this email goes straight to ${sub.anonymous ? 'the (anonymous) author' : name} at ${email}. It is also saved in the editor under Submissions.`
+      : '— No email was given, so this author can’t be replied to. It is also saved in the editor under Submissions.',
+  ].filter((l) => l !== null).join('\n');
+  const message = [
+    `From: ${from}`,
+    `To: ${to}`,
+    ...(email ? [`Reply-To: ${encodeHeader(name.replace(/["<>]/g, ''))} <${email}>`] : []),
+    `Subject: ${encodeHeader(`New paragraph: ${title || 'Untitled'} — ${name}`.slice(0, 200))}`,
+    `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
+    `Message-ID: ${editorsMessageId(sub.id, attempt)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    body,
+    '',
+  ].join('\r\n');
+  try {
+    await sendmail(message, RETURN_PATH);
+    markSubmission(sub.id, { emailed: true, emailedAt: new Date().toISOString(), emailAttempts: attempt, editorsMessageId: editorsMessageId(sub.id, attempt), emailError: undefined });
+  } catch (e) {
+    console.error('[submissions] email failed:', e.message);
+    markSubmission(sub.id, { emailed: false, emailError: e.message.slice(0, 300) });
+  }
+}
+
+// ---------- automatic "thank you" to the submitter ----------
+// Text comes from Site settings → "Auto-reply" ({name} is replaced; empty text = off).
+// Guard rails, since anyone can type any address into the form: one per address per hour,
+// 300 a day overall, a greeting name that can't carry links, and links in the copy made unclickable.
+const DEFAULT_AUTO_REPLY = `Hello {name},
+
+Thank you for submitting your paragraph! We will review your submission and let you know when it has been reviewed.
+
+Best,
+The Amazing Paragraph
+admin@amazingparagraph.com`;
+const autoReplied = new Map(); // address -> last sent
+let autoReplyDay = '', autoReplyCount = 0;
+async function autoReply(sub, site) {
+  const template = site.autoReply === undefined ? DEFAULT_AUTO_REPLY : String(site.autoReply);
+  const to = oneLine(sub.email).toLowerCase();
+  if (!to || !template.trim() || !process.env.SUBMISSIONS_TO) return; // no address / switched off / mail not set up
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== autoReplyDay) { autoReplyDay = today; autoReplyCount = 0; }
+  if (Date.now() - (autoReplied.get(to) || 0) < 3600e3 || autoReplyCount >= 300) {
+    return markSubmission(sub.id, { autoReplied: false, autoReplyNote: 'skipped (rate limit)' });
+  }
+  autoReplied.set(to, Date.now()); autoReplyCount += 1;
+  const rawName = sub.anonymous ? '' : oneLine(sub.name);
+  const safeName = /https?:|www\.|@|\.[a-z]{2,}\//i.test(rawName) ? '' : rawName.slice(0, 60);
+  const text = template.replace(/\r\n/g, '\n')
+    .replace(/[ \t]*\{name\}/g, safeName ? ` ${safeName}` : '') // "Hello {name}," → "Hello," when there's no name
+    .replace(/Hello ,/g, 'Hello,');
+  // A copy of what they sent. Links are written so mail apps won't make them clickable, so the
+  // form can't be used to send working links to someone else's inbox from this domain.
+  const defang = (t) => String(t || '').replace(/\b(https?):\/\//gi, '$1[:]//').replace(/\bwww\./gi, 'www[.]');
+  const copy = [
+    '',
+    '',
+    '———',
+    'A copy of your submission',
+    '',
+    sub.title ? `Title:    ${defang(oneLine(sub.title))}` : null,
+    `Received: ${fmtReceived(sub.received)}`,
+    '',
+    defang(sub.text),
+  ].filter((l) => l !== null).join('\n');
+  const from = oneLine(site.inquiriesEmail) || 'admin@amazingparagraph.com';
+  const message = [
+    `From: The Amazing Paragraph <${from}>`,
+    `To: ${to}`,
+    `Reply-To: ${from}`,
+    `Subject: ${encodeHeader('Thank you for your submission — The Amazing Paragraph')}`,
+    `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
+    `Message-ID: <thanks-${sub.id}@amazingparagraph.com>`,
+    'Auto-Submitted: auto-replied', // RFC 3834: tells mail systems not to auto-reply back
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    text + copy,
+    '',
+  ].join('\r\n');
+  try {
+    await sendmail(message, RETURN_PATH);
+    markSubmission(sub.id, { autoReplied: true, thanksMessageId: `<thanks-${sub.id}@amazingparagraph.com>` });
+  } catch (e) {
+    console.error('[submissions] auto-reply failed:', e.message);
+    markSubmission(sub.id, { autoReplied: false, autoReplyNote: e.message.slice(0, 200) });
+  }
+}
+
+// Is this an address mail can be delivered to? Checks the format, then that the domain has
+// mail servers (MX) or at least an address. DNS hiccups don't block a submission.
+const dns = require('dns').promises;
+async function checkEmail(email) {
+  if (!/^[^@\s"<>,;]+@[^@\s"<>,;]+\.[a-z]{2,}$/i.test(email)) return 'That email address doesn’t look right — please check it.';
+  const domain = email.split('@')[1].toLowerCase();
+  const withTimeout = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })), 4000))]);
+  try {
+    const mx = await withTimeout(dns.resolveMx(domain));
+    if (mx.length && !(mx.length === 1 && mx[0].exchange === '')) return null; // "." null MX = accepts no mail
+    return `${domain} doesn’t accept email — please check the address.`;
+  } catch (e) {
+    if (e.code === 'ENOTFOUND' || e.code === 'ENODATA') {
+      try { await withTimeout(dns.resolve4(domain)); return null; } catch { /* fall through */ }
+      return `We couldn’t find ${domain} — please check the email address.`;
+    }
+    return null; // DNS trouble on our side: don't punish the submitter
+  }
+}
+
 // ---------- auth ----------
-const sessions = new Map(); // token -> expiry
-const submitTimes = new Map(); // ip -> last submission (TEMP form)
+// Logins are signed tokens ("expiry.signature"), so they survive server restarts and deploys.
+// The signing secret lives in DATA_DIR/.session-secret (created on first run, never deployed).
+const SESSION_SECRET = (() => {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  const f = path.join(DATA_DIR, '.session-secret');
+  try { return fs.readFileSync(f, 'utf8').trim(); } catch { /* create below */ }
+  const s = crypto.randomBytes(32).toString('hex');
+  fs.writeFileSync(f, s + '\n', { mode: 0o600 });
+  return s;
+})();
+const signSession = (exp) => `${exp}.${crypto.createHmac('sha256', SESSION_SECRET).update(String(exp)).digest('hex')}`;
+const submitTimes = new Map(); // ip -> last submission
+const receipts = new Map(); // token -> { name, title, text, exp } shown once on the thank-you page
 const attempts = new Map(); // ip -> { n, until }
 const SESSION_MS = 1000 * 60 * 60 * 12;
 function parseCookies(req) {
@@ -350,11 +536,11 @@ function parseCookies(req) {
   }));
 }
 function isAuthed(req) {
-  const t = parseCookies(req).ap_session;
-  const exp = t && sessions.get(t);
-  if (!exp) return false;
-  if (exp < Date.now()) { sessions.delete(t); return false; }
-  return true;
+  const t = parseCookies(req).ap_session || '';
+  const exp = Number(t.split('.')[0]);
+  if (!exp || exp < Date.now()) return false;
+  const good = Buffer.from(signSession(exp)), got = Buffer.from(t);
+  return good.length === got.length && crypto.timingSafeEqual(good, got);
 }
 function checkPassword(pw) {
   const a = crypto.createHash('sha256').update(String(pw)).digest();
@@ -422,28 +608,55 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/static/')) return serveStatic(res, p.slice(8));
     if (req.method === 'GET' && p === '/') return send(res, 200, homePage(site));
     if (req.method === 'GET' && p === '/archive') return send(res, 200, archivePage(site));
-    if (req.method === 'GET' && p === '/about') return send(res, 200, aboutPage(site, url.searchParams.get('sent') ? 'sent' : url.searchParams.get('error') ? 'error' : ''));
+    if (req.method === 'GET' && p === '/about') return send(res, 200, aboutPage(site, url.searchParams.get('sent') ? { sent: true, receipt: receipts.get(url.searchParams.get('sent')) } : null));
 
-    // TEMP: public submission form
+    // public submission form
     if (req.method === 'POST' && p === '/submit') {
-      const ip = req.socket.remoteAddress;
-      const last = submitTimes.get(ip) || 0;
+      // Behind Caddy every request comes from 127.0.0.1, so use the forwarded client address.
+      const ip = (req.socket.remoteAddress === '127.0.0.1' || req.socket.remoteAddress === '::1')
+        ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress
+        : req.socket.remoteAddress;
       const f = new URLSearchParams(await readBody(req, 64e3));
-      const back = (q) => send(res, 303, '', 'text/plain', { Location: `/about?${q}#submit` });
-      if (f.get('website')) return back('sent=1'); // honeypot: bots fill hidden field
-      if (Date.now() - last < 30e3) return back('sent=1'); // 1 per 30s per visitor
-      const sub = {
-        id: crypto.randomUUID(),
+      if (f.get('website')) return send(res, 303, '', 'text/plain', { Location: '/about?sent=1#submit' }); // honeypot
+      const anonymous = f.get('anonymous') === '1';
+      const values = {
+        anonymous,
         name: (f.get('name') || '').trim().slice(0, 120),
         email: (f.get('email') || '').trim().slice(0, 200),
         title: (f.get('title') || '').trim().slice(0, 200),
         text: (f.get('text') || '').replace(/\s*\n+\s*/g, ' ').trim().slice(0, 8000),
+      };
+      // On a problem, re-show the form with what they typed and a specific message (nothing is lost).
+      const fail = (msg) => send(res, 400, aboutPage(site, { error: msg, values }));
+      if (!values.text) return fail('Please paste your paragraph.');
+      if (!anonymous && !values.name) return fail('Please add your name as it should be printed, or tick “Submit anonymously”.');
+      if (!anonymous && !values.email) return fail('Please add your email so we can reply, or tick “Submit anonymously”.');
+      if (values.email) {
+        const check = await checkEmail(values.email);
+        if (check) return fail(check);
+      }
+      const wait = 15e3 - (Date.now() - (submitTimes.get(ip) || 0));
+      if (wait > 0) return fail(`You just sent one — please wait ${Math.ceil(wait / 1000)} seconds before submitting another.`);
+      const sub = {
+        id: crypto.randomUUID(),
+        anonymous,
+        name: anonymous ? 'Anonymous' : values.name,
+        email: values.email,
+        title: values.title,
+        text: values.text,
         received: new Date().toISOString(),
       };
-      if (!sub.name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sub.email) || !sub.text) return back('error=1');
       submitTimes.set(ip, Date.now());
-      db.saveSubmissions([sub, ...db.submissions()]);
-      return back('sent=1');
+      db.saveSubmissions([sub, ...db.submissions()]); // stored first, so a mail failure never loses it
+      notifySubmission(sub);
+      autoReply(sub, site);
+      // a private, short-lived receipt so the thank-you page can show what they sent
+      const now = Date.now();
+      for (const [k, r] of receipts) if (r.exp < now) receipts.delete(k);
+      const token = crypto.randomBytes(16).toString('hex');
+      const confirming = !!values.email && !!process.env.SUBMISSIONS_TO && (site.autoReply === undefined || String(site.autoReply).trim() !== '');
+      receipts.set(token, { name: anonymous ? '' : values.name, title: values.title, text: values.text, email: confirming ? values.email : '', exp: now + 15 * 60e3 });
+      return send(res, 303, '', 'text/plain', { Location: `/about?sent=${token}#submit` }); // redirect so reload never re-sends
     }
     const m = p.match(/^\/p\/(\d+)$/);
     if (req.method === 'GET' && m) {
@@ -470,22 +683,32 @@ const server = http.createServer(async (req, res) => {
         return send(res, 401, adminPage(site, false, 'Wrong password.'));
       }
       attempts.delete(ip);
-      const token = crypto.randomBytes(32).toString('hex');
-      sessions.set(token, Date.now() + SESSION_MS);
+      const token = signSession(Date.now() + SESSION_MS);
       const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
       return send(res, 303, '', 'text/plain', { Location: '/admin', 'Set-Cookie': `ap_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${secure}` });
     }
     if (p === '/admin/logout' && req.method === 'POST') {
-      sessions.delete(parseCookies(req).ap_session);
       return send(res, 303, '', 'text/plain', { Location: '/about', 'Set-Cookie': 'ap_session=; Path=/; Max-Age=0' });
     }
     if (p.startsWith('/admin/') || p.startsWith('/api/admin/')) {
-      if (!isAuthed(req)) return json(res, 401, { error: 'Not logged in' });
+      if (!isAuthed(req)) {
+        // a link/download (not the editor's own API calls) goes back to the login page instead of an error
+        if (req.method === 'GET' && !p.startsWith('/api/')) return send(res, 303, '', 'text/plain', { Location: '/admin' });
+        return json(res, 401, { error: 'Not logged in' });
+      }
       // writes must be JSON (blocks plain cross-site form posts)
       if (req.method !== 'GET' && !(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: 'JSON required' });
     }
+    if (p === '/admin/paragraphs.csv' || p === '/admin/submissions.csv') {
+      const today = new Date().toISOString().slice(0, 10);
+      const isSubs = p === '/admin/submissions.csv';
+      const csv = isSubs
+        ? toCSV(db.submissions(), submissionColumns(fmtReceived))
+        : toCSV(db.all().sort((a, b) => b.number - a.number), paragraphColumns((x) => label(x, site)));
+      return send(res, 200, csv, 'text/csv; charset=utf-8', { 'Content-Disposition': `attachment; filename="amazing-paragraph-${isSubs ? 'submissions' : 'paragraphs'}-${today}.csv"`, 'Cache-Control': 'no-store' });
+    }
     if (p === '/admin/export.json') {
-      return send(res, 200, JSON.stringify({ site, paragraphs: db.all() }, null, 2), 'application/json', { 'Content-Disposition': `attachment; filename="amazing-paragraph-backup-${new Date().toISOString().slice(0, 10)}.json"` });
+      return send(res, 200, JSON.stringify({ site, paragraphs: db.all(), submissions: db.submissions() }, null, 2), 'application/json', { 'Content-Disposition': `attachment; filename="amazing-paragraph-backup-${new Date().toISOString().slice(0, 10)}.json"` });
     }
     if (p === '/api/admin/data' && req.method === 'GET') {
       const all = db.all().sort((a, b) => b.number - a.number);
@@ -513,7 +736,25 @@ const server = http.createServer(async (req, res) => {
       db.save(db.all().filter((x) => x.id !== am[1]));
       return json(res, 200, { ok: true });
     }
-    if (p === '/api/admin/submissions' && req.method === 'GET') return json(res, 200, { submissions: db.submissions() });
+    if (p === '/api/admin/submissions' && req.method === 'GET') {
+      const delivery = db.delivery();
+      const look = (id) => (id && delivery[id]) || null;
+      return json(res, 200, {
+        submissions: db.submissions().map((x) => ({
+          ...x,
+          editorsDelivery: x.emailed ? look(x.editorsMessageId || `<${x.id}@amazingparagraph.com>`) : null,
+          thanksDelivery: x.autoReplied ? look(x.thanksMessageId || `<thanks-${x.id}@amazingparagraph.com>`) : null,
+        })),
+      });
+    }
+    const rs = p.match(/^\/api\/admin\/submissions\/([\w-]+)\/resend$/);
+    if (rs && req.method === 'POST') {
+      const sub = db.submissions().find((x) => x.id === rs[1]);
+      if (!sub) return json(res, 404, { error: 'Not found' });
+      if (!process.env.SUBMISSIONS_TO) return json(res, 400, { error: 'Email is not set up on this server.' });
+      await notifySubmission(sub, (sub.emailAttempts || 1) + 1);
+      return json(res, 200, { ok: true });
+    }
     const sm = p.match(/^\/api\/admin\/submissions\/([\w-]+)$/);
     if (sm && req.method === 'DELETE') {
       db.saveSubmissions(db.submissions().filter((x) => x.id !== sm[1]));
@@ -521,7 +762,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/site' && req.method === 'PUT') {
       const input = JSON.parse(await readBody(req));
-      const keep = ['title', 'tagline', 'about', 'submissions', 'email', 'instagram', 'labelFormat', 'aboutImage'];
+      const keep = ['title', 'tagline', 'about', 'submissions', 'email', 'inquiriesEmail', 'instagram', 'labelFormat', 'aboutImage', 'autoReply', 'leadStyle'];
       const next = { ...site };
       for (const k of keep) if (k in input) next[k] = String(input[k]).slice(0, 10000);
       if ('formats' in input) next.formats = String(input.formats).split(',').map((s) => s.trim()).filter(Boolean);
